@@ -4,7 +4,7 @@
 <title>Guess my word</title>
 <meta charset="UTF-8" name="viewport" content="width=device-width, initial-scale=1">
 
-<link rel="stylesheet" href="./index.css"/>
+<link rel="stylesheet" href="./index.css?version=2"/>
 </head>
 <body>
 <div
@@ -153,6 +153,14 @@
                     value="submit"
                     v-bind:disabled="leaderboardRequest"
                 />
+                <br /><label style="margin-top: 5px; font-weight: bold; display: block; cursor: pointer;">
+                    <input
+                        type="checkbox"
+                        v-bind:checked="areGuessesPublic"
+                        v-on:change="toggleGuessesPublic"
+                    />
+                    allow my guesses to be public
+                </label>
                 <div class="error" v-if="leaderSubmitError" style="margin: 5px 0px;">
                     {{leaderSubmitError}}
                 </div>
@@ -207,9 +215,9 @@
 
 
 <script src="https://d2t3dun0il9ood.cloudfront.net/dictionary.js"></script>
-<script src="https://unpkg.com/vue/dist/vue.min.js"></script>
-<script src="common.js"></script>
-<script src="index.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/vue@2.6.11"></script>
+<script src="common.js?version=2.5"></script>
+<script src="index.js?version=2.5"></script>
 
 <!-- Uncomment to run tests in browser -->
 <!-- <script src="./tests.js"></script> -->

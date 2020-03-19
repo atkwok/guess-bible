@@ -10,6 +10,7 @@ getSavedGameByDifficulty,
 isToday,
 now,
 getStoredUserNames,
+WordCloud,
 */
 
 const LEADER_HEADER_FIELDS_BY_TYPE = {
@@ -18,6 +19,7 @@ const LEADER_HEADER_FIELDS_BY_TYPE = {
         { text: '# guesses', key: 'numberOfGuesses' },
         { text: 'time', key: 'time', formatter: getFormattedTime },
         { text: 'awards', key: 'awards' },
+        { text: 'guesses', key: 'guesses' },
     ],
     allTime: [
         { text: 'name', key: 'name' },
@@ -74,25 +76,29 @@ const app = new Vue({ // eslint-disable-line no-unused-vars
         filteredLeaders: null,
         showInappropriateNames: false,
         reportMode: false,
-        reportsEnabled: false,
+        hasPlayedThisBoardToday: null, // determined in getLeaders
         localBadNames: loadSavedLocalBadNames(),
-        lastUsedName: getStoredUserNames()[0],
+        usedNames: getStoredUserNames(),
+        leaderHeaderFields: null, // determined in getLeaders
+        wordCloudData: null,
+        wordCloudCanvas: null,
     },
     created() {
-        this.getLeaders(this.leadersType);
+        this.getLeaders();
     },
     methods: {
         getLeaders,
         setDifficulty(e) {
             const newDifficulty = e.target.value;
             this.difficulty = newDifficulty;
-            this.getLeaders(this.leadersType);
+            this.getLeaders();
         },
         changeLeaderSort,
         toggleLeaderType() {
             this.leadersType = this.leadersType === 'normal' ? 'allTime' : 'normal';
+            this.reportMode = false;
             this.sortConfig = DEFAULT_SORT_CONFIG_BY_LEADER_TYPE[this.leadersType];
-            this.getLeaders(this.leadersType);
+            this.getLeaders();
         },
         updateLeaderSearch(e) {
             this.leaderSearch = e.target.value;
@@ -140,6 +146,43 @@ const app = new Vue({ // eslint-disable-line no-unused-vars
         },
         isBadName(record) {
             return record.badName || this.localBadNames[record.name];
+        },
+        toggleWordCloud() {
+            const wordCloudContainer = document.getElementById('word-cloud-container');
+            if (this.wordCloudCanvas) {
+                wordCloudContainer.innerHTML = '';
+                this.wordCloudCanvas = null;
+                return;
+            }
+            this.wordCloudCanvas = document.createElement('div');
+            this.wordCloudCanvas.id = 'word-cloud-canvas';
+            wordCloudContainer.append(this.wordCloudCanvas);
+
+            let i = 0;
+            WordCloud(
+                this.wordCloudCanvas,
+                {
+                    list: this.wordCloudData,
+                    fontFamily: 'sans-serif',
+                    color: stripedColorsBlackToGray, // 'random-dark',
+                    minRotation: 0,
+                    maxRotation: 0,
+                    drawOutOfBound: false,
+                    shrinkToFit: true,
+                    gridSize: 10,
+                    minSize: 8,
+                }
+            );
+
+            function stripedColorsBlackToGray() {
+                let n = i * 2;
+                if (i % 2 !== 0) {
+                    n += 120;
+                }
+                i += 1;
+                n = Math.min(200, n);
+                return `rgb(${n}, ${n}, ${n})`;
+            }
         },
     },
 });
@@ -230,12 +273,20 @@ function handleScroll() {
     if (header.style.position !== 'static') header.style.position = 'static';
 }
 
-function getLeaders(type) {
+function getLeaders() {
     let date;
+    const type = this.leadersType;
     if (type === 'allTime') {
         date = 'ALL';
     } else {
         date = getTimezonelessLocalDate(new Date());
+    }
+
+    this.hasPlayedThisBoardToday = determineIfPlayedThisBoardToday(this.difficulty, type);
+    this.leaderHeaderFields = LEADER_HEADER_FIELDS_BY_TYPE[type];
+    if (!this.hasPlayedThisBoardToday && type === 'normal') {
+        // remove guesses column if we won't have the data
+        this.leaderHeaderFields = LEADER_HEADER_FIELDS_BY_TYPE.normal.filter(h => h.key !== 'guesses');
     }
 
     const onSuccess = (json) => {
@@ -259,7 +310,7 @@ function getLeaders(type) {
         } else {
             this.onSearch();
             this.message = '';
-            this.reportsEnabled = determineIfCanReportBadNames(this.difficulty, type);
+            this.wordCloudData = getWordCloudData(this.leaders);
         }
     };
 
@@ -271,13 +322,27 @@ function getLeaders(type) {
 
     this.message = 'loading...';
     this.leaders = [EMPTY_LEADER];
-    makeLeaderboardRequest(date, this.difficulty, onSuccess, onFailure);
+    this.wordCloudData = null;
+    this.wordCloudCanvas = null;
+
+    const queryString = getQueryStringForIncludingGuesses(this.hasPlayedThisBoardToday, this.difficulty);
+    makeLeaderboardRequest(date, this.difficulty, onSuccess, onFailure, null, queryString);
 }
 
-function determineIfCanReportBadNames(difficulty, type) {
+function determineIfPlayedThisBoardToday(difficulty, type) {
+    // return true // GUESSES TEST
     if (type === 'allTime') return false; // can't report on all time board
     const savedGame = getSavedGameByDifficulty(difficulty);
     return Boolean(savedGame && savedGame.submitTime && isToday(savedGame.submitTime));
+}
+
+function getQueryStringForIncludingGuesses(hasPlayed, difficulty) {
+    // return '?name=miguelpotts&key=pop' // GUESSES TEST
+    const savedGame = getSavedGameByDifficulty(difficulty);
+    if (!hasPlayed || !savedGame) return '';
+    const { username, guesses } = savedGame;
+    const [firstGuess] = guesses;
+    return `?name=${username}&key=${firstGuess}`;
 }
 
 const OPPOSITE_SORT_DIRECTION = {
@@ -371,6 +436,11 @@ function normalizeLeadersAndAddAwards(leadersData) {
         if (leader.firstSubmitDate) {
             leader.firstSubmitDate = leader.firstSubmitDate.replace(/T.*/, ''); // remove time portion
         }
+        if (leader.guesses) {
+            leader.guesses = joinWithSpaces(leader.guesses);
+        } else {
+            leader.guesses = '';
+        }
         return leader;
     });
 }
@@ -385,6 +455,56 @@ function removeTimeFromISOString(dateString) {
 
 function getTwoDecimalPlaces(number) {
     return number && number.toFixed(2);
+}
+
+function joinWithSpaces(array) {
+    return array && array.join && array.join(' ');
+}
+
+function getWordCloudData(leaders) {
+    let maxWordFrequency = 0;
+    const wordFrequency = {};
+    leaders.forEach(({ guesses }) => {
+        guesses = (guesses && guesses.split(' ')) || ['word'];
+        guesses.pop(); // last word is the word, remove it
+        guesses.forEach((guess) => {
+            if (!wordFrequency[guess]) {
+                wordFrequency[guess] = 0;
+            }
+            wordFrequency[guess] += 1;
+            if (wordFrequency[guess] > maxWordFrequency) {
+                maxWordFrequency = wordFrequency[guess];
+            }
+        });
+    });
+
+    // remove words only used once
+    // Object.keys(wordFrequency).forEach((word) => {
+    //     if (wordFrequency[word] === 1) {
+    //         delete wordFrequency[word];
+    //     }
+    // });
+
+    if (maxWordFrequency < 10 || Object.keys(wordFrequency) < 5) {
+        return null;
+    }
+
+    return toWordCloud2List(wordFrequency);
+}
+
+function toWordCloud2List(wordFrequency) {
+    const list = [];
+    Object.keys(wordFrequency).forEach((word) => {
+        list.push([word, wordFrequency[word]]);
+    });
+
+    list.sort(([, aFrequency], [, bFrequency]) => bFrequency - aFrequency);
+    return list;
+}
+
+function randomColor() {
+    const randomUpTo200 = Math.round(Math.random() * 200);
+    return `rgb(${randomUpTo200}, ${randomUpTo200}, ${randomUpTo200})`;
 }
 
 /* eslint-disable */
